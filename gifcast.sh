@@ -8,8 +8,12 @@ FILE="$HOME/Images/Captures/`date +%FT%T.gif`"
 
 # Temporary files
 TMPDIR="/tmp"
-TMP_AVI=$(mktemp $TMPDIR/gifcast.XXXXXXXXXX.avi)
+TMP_AVI=$(mktemp -u $TMPDIR/gifcast.XXXXXXXXXX.avi)
 TMP_PALETTE=$(mktemp $TMPDIR/gifcast.XXXXXXXXXX.png)
+TMP_PIPE=$(mktemp -u $TMPDIR/gifcast.XXXXXXXXXX.fifo)
+mkfifo $TMP_PIPE
+
+exec 3<> $TMP_PIPE
 
 # Cleanup temporary files at exit
 function at_exit() {
@@ -21,22 +25,25 @@ trap at_exit EXIT
 
 # Stop recording and tray icon
 function tray_cb {
-  tray_pid=`pidof yad`
-  capture_pid=`pidof ffmpeg`
+echo $TMP_PIPE
+  local pipe=$1
+  local cast_pid=$2
+  local capture_pid=`pgrep -P $cast_pid`
+
   kill $capture_pid
-  kill $tray_pid
+  echo "quit" > $pipe
 }
 export -f tray_cb
 
 # Start capture
-ffcast $MODE % ffmpeg -y -f x11grab -show_region 1 -framerate 15 \
-    -video_size %s -i %D+%c -codec:v huffyuv                  \
-    -vf crop="iw-mod(iw\\,2):ih-mod(ih\\,2)" $TMP_AVI &
-
+ffcast $MODE rec $TMP_AVI &
+cast_pid=$!
 
 yad --notification \
   --image media-playback-stop \
-  --command "bash -c 'tray_cb'"
+  --command "bash -c 'tray_cb $TMP_PIPE $cast_pid'" \
+  --listen <&3
+
 
 # Start convert using a GIF palette
 ffmpeg -i $TMP_AVI -vf "fps=15,palettegen" -y $TMP_PALETTE
